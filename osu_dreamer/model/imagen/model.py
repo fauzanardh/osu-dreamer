@@ -156,7 +156,7 @@ class Model(nn.Module):
         return pred, x_start
 
     @torch.no_grad()
-    def p_sample_loop(self, a, shape, resample_times):
+    def p_sample_loop(self, a, shape):
         device = self.device
 
         batch = shape[0]
@@ -180,7 +180,7 @@ class Model(nn.Module):
         return x
 
     @torch.no_grad()
-    def sample(self, a, resample_times=35):
+    def sample(self, a):
         batch = a.shape[0]
         length = a.shape[-1]
         shape = (batch, X_DIM, length)
@@ -188,7 +188,6 @@ class Model(nn.Module):
         x = self.p_sample_loop(
             a=a,
             shape=shape,
-            resample_times=resample_times,
         )
 
         return x
