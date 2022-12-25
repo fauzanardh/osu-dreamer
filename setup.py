@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name="osu-dreamer",
     version="3.1",
-    python_requires='>=3.7.15',
+    python_requires='>=3.7.12',
     packages=[
         "osu_dreamer",
         "osu_dreamer.model",
