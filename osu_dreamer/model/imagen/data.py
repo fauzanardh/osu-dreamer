@@ -68,12 +68,12 @@ class SubsequenceDataset(StreamPerSample):
         for map_file in self.dataset:
             with open(map_file, "rb") as f:
                 magic = np.lib.format.read_magic(f)
-                read_header = (
+                read_header = read_header = (
                     np.lib.format.read_array_header_1_0
                     if magic[0] == 1
                     else np.lib.format.read_array_header_2_0
                 )
-                shape = read_header(f, max_header_size=100000)[0]
+                shape = read_header(f)[0]
                 num_samples += int(shape[-1] / self.seq_len * self.subseq_density)
         self.approx_dataset_size = num_samples * self.sample_density
 
