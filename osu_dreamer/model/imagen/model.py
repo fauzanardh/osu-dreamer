@@ -1,5 +1,8 @@
-from typing import Tuple
+import copy
+import librosa
+import numpy as np
 from tqdm.auto import tqdm
+from matplotlib import pyplot as plt
 
 import torch
 from torch import nn
@@ -8,11 +11,14 @@ from einops import rearrange, reduce
 
 from osu_dreamer.model.imagen import GaussianDiffusionContinuousTimes
 from osu_dreamer.model.imagen import UNet
-from osu_dreamer.data import A_DIM
-from osu_dreamer.signal import MAP_SIGNAL_DIM as X_DIM
+
+# from osu_dreamer.data import A_DIM
+# from osu_dreamer.signal import MAP_SIGNAL_DIM as X_DIM
 
 
 VALID_PAD = 1024
+A_DIM = 40
+X_DIM = 9
 
 
 def right_pad_dims_to(x, t):
@@ -25,27 +31,27 @@ def right_pad_dims_to(x, t):
 class Model(nn.Module):
     def __init__(
         self,
-        h_dim: int = 128,
-        h_dim_mult: Tuple[int, int, int, int] = (1, 2, 4, 4),
+        h_dim=128,
+        h_dim_mult=(1, 2, 4, 4),
         cond_dim=None,
-        num_time_tokens: int = 2,
-        learned_sinu_pos_emb_dim: int = 16,
-        layer_attns: Tuple[bool, bool, bool, bool] = (False, True, True, True),
-        layer_cross_attns: Tuple[bool, bool, bool, bool] = (False, False, False, False),
-        num_resnet_blocks: int = 2,
-        resnet_groups: int = 8,
-        scale_skip_connection: bool = True,
-        use_global_context_attn: bool = True,
-        attn_heads: int = 8,
-        attn_dim_head: int = 64,
-        attn_depth: int = 1,
-        ff_mult: int = 2,
-        timesteps: int = 1024,
-        loss_type: str = "l2",
-        noise_schedule: str = "cosine",
-        pred_objective: str = "noise",
-        dynamic_thresholding: bool = True,
-        dynamic_thresholding_percentile: float = 0.95,
+        num_time_tokens=2,
+        learned_sinu_pos_emb_dim=16,
+        layer_attns=(False, True, True, True),
+        layer_cross_attns=(False, False, False, False),
+        num_resnet_blocks=2,
+        resnet_groups=8,
+        scale_skip_connection=True,
+        use_global_context_attn=True,
+        attn_heads=8,
+        attn_dim_head=64,
+        attn_depth=1,
+        ff_mult=2,
+        timesteps=1024,
+        loss_type="l2",
+        noise_schedule="cosine",
+        pred_objective="noise",
+        dynamic_thresholding=True,
+        dynamic_thresholding_percentile=0.95,
     ):
         super().__init__()
 
@@ -181,6 +187,7 @@ class Model(nn.Module):
 
     @torch.no_grad()
     def sample(self, a):
+        a, sl = self.inference_pad(a)
         batch = a.shape[0]
         length = a.shape[-1]
         shape = (batch, X_DIM, length)
@@ -190,7 +197,7 @@ class Model(nn.Module):
             shape=shape,
         )
 
-        return x
+        return x[sl]
 
     def p_losses(
         self,
@@ -207,7 +214,7 @@ class Model(nn.Module):
             noise = torch.randn_like(x_start)
 
         # get x_t
-        x_noisy, log_snr, alpha, sigma = self.noise_scheduler.q_sample(
+        x_noisy, _, alpha, sigma = self.noise_scheduler.q_sample(
             x_start=x_start,
             t=times,
             noise=noise,
