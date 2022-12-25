@@ -440,7 +440,12 @@ class UNet(nn.Module):
         ) in enumerate(zip(in_out, *layer_params)):
             is_last = i >= (num_resolution - 1)
 
-            layer_cond_dim = cond_dim if layer_attn or layer_cross_attn else None
+            layer_cond_dim = cond_dim if layer_cross_attn else None
+
+            if layer_attn:
+                transformer_block = TransformerBlock
+            else:
+                transformer_block = nn.Identity
 
             current_dim = h_dim_in
             skip_connection_dims.append(current_dim)
@@ -476,7 +481,7 @@ class UNet(nn.Module):
                                 for _ in range(num_resnet_blocks)
                             ]
                         ),
-                        TransformerBlock(
+                        transformer_block(
                             dim=current_dim,
                             depth=attn_depth,
                             ff_mult=ff_mult,
@@ -517,7 +522,12 @@ class UNet(nn.Module):
         ) in enumerate(zip(reversed(in_out), *reversed_layer_params)):
             is_last = i == (len(in_out) - 1)
 
-            layer_cond_dim = cond_dim if layer_attn or layer_cross_attn else None
+            layer_cond_dim = cond_dim if layer_cross_attn else None
+
+            if layer_attn:
+                transformer_block = TransformerBlock
+            else:
+                transformer_block = nn.Identity
 
             current_dim = h_dim_out
             skip_connection_dim = skip_connection_dims.pop()
@@ -548,7 +558,7 @@ class UNet(nn.Module):
                                 for _ in range(num_resnet_blocks)
                             ]
                         ),
-                        TransformerBlock(
+                        transformer_block(
                             dim=current_dim,
                             depth=attn_depth,
                             ff_mult=ff_mult,

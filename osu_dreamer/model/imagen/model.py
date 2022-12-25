@@ -1,8 +1,4 @@
-import copy
-import librosa
-import numpy as np
 from tqdm.auto import tqdm
-from matplotlib import pyplot as plt
 
 import torch
 from torch import nn
@@ -11,9 +7,6 @@ from einops import rearrange, reduce
 
 from osu_dreamer.model.imagen import GaussianDiffusionContinuousTimes
 from osu_dreamer.model.imagen import UNet
-
-# from osu_dreamer.data import A_DIM
-# from osu_dreamer.signal import MAP_SIGNAL_DIM as X_DIM
 
 
 VALID_PAD = 1024
@@ -37,7 +30,7 @@ class Model(nn.Module):
         num_time_tokens=2,
         learned_sinu_pos_emb_dim=16,
         layer_attns=(False, True, True, True),
-        layer_cross_attns=(False, False, False, False),
+        layer_cross_attns=(False, True, True, True),
         num_resnet_blocks=2,
         resnet_groups=8,
         scale_skip_connection=True,
@@ -46,7 +39,7 @@ class Model(nn.Module):
         attn_dim_head=64,
         attn_depth=1,
         ff_mult=2,
-        timesteps=1024,
+        timesteps=128,
         loss_type="l2",
         noise_schedule="cosine",
         pred_objective="noise",
