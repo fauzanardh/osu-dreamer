@@ -7,7 +7,7 @@ from torch import nn
 from torch.nn import functional as F
 from einops import rearrange, reduce
 
-from osu_dreamer.model.imagen import UNet
+from osu_dreamer.model.modules import UNet
 from osu_dreamer.signal import X_DIM
 
 
@@ -45,17 +45,17 @@ class ElucidatedModel(nn.Module):
         self,
         h_dim=128,
         h_dim_mult=(1, 2, 3, 4),
-        cond_dim=None,
-        num_time_tokens=2,
-        learned_sinu_pos_emb_dim=16,
-        layer_attns=(False, True, True, True),
-        layer_cross_attns=(False, True, True, True),
+        # cond_dim=None,
+        # num_time_tokens=2,
+        # learned_sinu_pos_emb_dim=16,
+        # layer_attns=(False, True, True, True),
+        # layer_cross_attns=(False, True, True, True),
         num_resnet_blocks=2,
         resnet_groups=8,
-        scale_skip_connection=True,
+        # scale_skip_connection=True,
         attn_heads=8,
         attn_dim_head=64,
-        attn_depth=1,
+        # attn_depth=1,
         ff_mult=2,
         loss_type="l2",
         dynamic_thresholding=True,
@@ -84,25 +84,45 @@ class ElucidatedModel(nn.Module):
         else:
             raise ValueError(f"Invalid loss type {loss_type}")
 
+        # self.unet = UNet(
+        #     dim_in=A_DIM + X_DIM,
+        #     dim_out=X_DIM,
+        #     cond_dim=cond_dim,
+        #     cond_on_map_difficulty=False,
+        #     num_time_tokens=num_time_tokens,
+        #     learned_sinu_pos_emb_dim=learned_sinu_pos_emb_dim,
+        #     h_dim=h_dim,
+        #     h_dim_mult=h_dim_mult,
+        #     layer_attns=layer_attns,
+        #     layer_cross_attns=layer_cross_attns,
+        #     num_resnet_blocks=num_resnet_blocks,
+        #     resnet_groups=resnet_groups,
+        #     scale_skip_connection=scale_skip_connection,
+        #     attn_heads=attn_heads,
+        #     attn_dim_head=attn_dim_head,
+        #     attn_depth=attn_depth,
+        #     ff_mult=ff_mult,
+        # )
+
+        h_dims = [h_dim * m for m in h_dim_mult]
+        h_dim_groups = resnet_groups
+        convnext_mult = ff_mult
+        blocks_per_depth = num_resnet_blocks
+        attn_dim = attn_dim_head
+
         self.unet = UNet(
-            dim_in=A_DIM + X_DIM,
-            dim_out=X_DIM,
-            cond_dim=cond_dim,
-            cond_on_map_difficulty=False,
-            num_time_tokens=num_time_tokens,
-            learned_sinu_pos_emb_dim=learned_sinu_pos_emb_dim,
-            h_dim=h_dim,
-            h_dim_mult=h_dim_mult,
-            layer_attns=layer_attns,
-            layer_cross_attns=layer_cross_attns,
-            num_resnet_blocks=num_resnet_blocks,
-            resnet_groups=resnet_groups,
-            scale_skip_connection=scale_skip_connection,
-            attn_heads=attn_heads,
-            attn_dim_head=attn_dim_head,
-            attn_depth=attn_depth,
-            ff_mult=ff_mult,
+            A_DIM + X_DIM,
+            X_DIM,
+            h_dims,
+            h_dim_groups,
+            convnext_mult,
+            5,
+            5,
+            blocks_per_depth,
+            attn_heads,
+            attn_dim,
         )
+
         self.unet_depth = len(h_dim_mult)
 
         hparams = [
