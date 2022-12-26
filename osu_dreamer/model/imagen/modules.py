@@ -508,7 +508,7 @@ class UNet(nn.Module):
             skip_connection_dim = skip_connection_dims.pop()
 
             post_upsample = (
-                Upsample(current_dim, h_dim_in) if not is_last else nn.Identity()
+                Upsample(current_dim, h_dim_in) if not is_last else Identity()
             )
 
             self.ups.append(
