@@ -272,7 +272,7 @@ class ElucidatedModel(nn.Module):
             maps_hat = maps + added_noise
 
             if len(sigma_hat.shape) == 0:
-                sigma_hat = sigma_hat.unsqueeze(0)
+                sigma_hat = sigma_hat.item()
 
             model_output = self.preconditioned_network_forward(
                 maps_hat,
@@ -289,7 +289,7 @@ class ElucidatedModel(nn.Module):
 
             if sigma_next != 0:
                 if len(sigma_next.shape) == 0:
-                    sigma_next = sigma_next.unsqueeze(0)
+                    sigma_next = sigma_next.item()
 
                 model_output_next = self.preconditioned_network_forward(
                     maps_next,
