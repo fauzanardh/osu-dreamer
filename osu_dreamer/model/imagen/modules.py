@@ -3,7 +3,6 @@ from functools import partial
 
 import torch
 from torch import nn
-from torch.functional import einsum
 
 from xformers.ops import memory_efficient_attention
 
@@ -64,37 +63,12 @@ def FeedForward(dim, mult=2):
 
 def Downsample(dim, dim_out=None):
     dim_out = dim if dim_out is None else dim_out
-    return nn.Sequential(
-        Rearrange("b c (n s1) -> b (c s1) n", s1=2),
-        nn.Conv1d(dim * 2, dim_out, 3, padding=1),
-    )
+    return nn.Conv1d(dim, dim_out, 4, 2, 1, padding_mode='reflect')
 
 
 def Upsample(dim, dim_out=None):
     dim_out = dim if dim_out is None else dim_out
-    return nn.Sequential(
-        nn.Upsample(scale_factor=2, mode="nearest"),
-        nn.Conv1d(dim, dim_out, 3, padding=1),
-    )
-
-
-class GlobalContext(nn.Module):
-    def __init__(self, dim, dim_out):
-        super().__init__()
-        self.to_ = nn.Conv1d(dim, 1, 1)
-        h_dim = max(3, dim_out // 2)
-
-        self.net = nn.Sequential(
-            nn.Conv1d(dim, h_dim, 1),
-            nn.SiLU(),
-            nn.Conv1d(h_dim, dim_out, 1),
-        )
-
-    def forward(self, x):
-        ctx = self.to_(x)
-        out = einsum("b i n, b c n -> b c i", ctx.softmax(dim=-1), x)
-        out = self.net(out)
-        return out
+    return nn.ConvTranspose1d(dim, dim_out, 4, 2, 1)
 
 
 class LearnedSinusoidalPosEmb(nn.Module):
@@ -245,7 +219,7 @@ class Block(nn.Module):
         super().__init__()
         self.group_norm = nn.GroupNorm(groups, dim) if norm else nn.Identity()
         self.activation = nn.SiLU()
-        self.project = nn.Conv1d(dim, dim_out, 3, padding=1)
+        self.project = nn.Conv1d(dim, dim_out, 7, padding=3)
 
     def forward(self, x, scale_shift=None):
         x = self.group_norm(x)
@@ -268,7 +242,6 @@ class ResnetBlock(nn.Module):
         cond_dim=None,
         time_cond_dim=None,
         groups=8,
-        use_gca=False,
         use_flash_attention=True,
         **attn_kwargs,
     ):
@@ -290,9 +263,7 @@ class ResnetBlock(nn.Module):
         self.block1 = Block(dim, dim_out, groups=groups)
         self.block2 = Block(dim_out, dim_out, groups=groups)
 
-        self.gca = GlobalContext(dim_out, dim_out) if use_gca else Always(1)
-
-        self.res_conv = nn.Conv1d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
+        self.res_conv = nn.Conv1d(dim, dim_out, 7, padding=3, padding_mode="reflect") if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb=None, cond=None):
         scale_shift = None
@@ -309,8 +280,6 @@ class ResnetBlock(nn.Module):
             h = rearrange(h, "b n c -> b c n")
 
         h = self.block2(h, scale_shift=scale_shift)
-
-        h = h * self.gca(h)
 
         return h + self.res_conv(x)
 
@@ -370,7 +339,6 @@ class UNet(nn.Module):
         num_resnet_blocks=2,
         resnet_groups=8,
         scale_skip_connection=True,
-        use_global_context_attn=False,
         attn_heads=8,
         attn_dim_head=64,
         attn_depth=1,
@@ -413,7 +381,7 @@ class UNet(nn.Module):
         # resnet
         resnet_klass = partial(ResnetBlock, groups=resnet_groups, **attn_kwargs)
 
-        self.init_conv = nn.Conv1d(dim_in, h_dims[0], 3, padding=1)
+        self.init_conv = nn.Conv1d(dim_in, h_dims[0], 7, padding=3)
 
         # scale skip connection
         self.skip_connect_scale = 1.0 if not scale_skip_connection else (2**-0.5)
@@ -454,7 +422,7 @@ class UNet(nn.Module):
                 Downsample(current_dim, h_dim_out)
                 if not is_last
                 else Parallel(
-                    nn.Conv1d(current_dim, h_dim_out, 3, padding=1),
+                    nn.Conv1d(current_dim, h_dim_out, 7, padding=3),
                     nn.Conv1d(h_dim_in, h_dim_out, 1),
                 )
             )
@@ -476,7 +444,6 @@ class UNet(nn.Module):
                                     current_dim,
                                     time_cond_dim=time_cond_dim,
                                     groups=resnet_groups,
-                                    use_gca=use_global_context_attn,
                                 )
                                 for _ in range(num_resnet_blocks)
                             ]
@@ -553,7 +520,6 @@ class UNet(nn.Module):
                                     current_dim,
                                     time_cond_dim=time_cond_dim,
                                     groups=resnet_groups,
-                                    use_gca=use_global_context_attn,
                                 )
                                 for _ in range(num_resnet_blocks)
                             ]
@@ -576,9 +542,8 @@ class UNet(nn.Module):
             h_dim,
             time_cond_dim=time_cond_dim,
             groups=resnet_groups,
-            use_gca=True,
         )
-        self.final_conv = nn.Conv1d(h_dim, dim_out, 3, padding=1)
+        self.final_conv = nn.Conv1d(h_dim, dim_out, 1)
 
     def forward(self, x, a, ts):
         x = torch.cat((x, a), dim=1)
