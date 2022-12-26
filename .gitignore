@@ -6,3 +6,6 @@ data*/
 lightning_logs*/
 *.ckpt
 *.ipynb
+*.pt
+*.bak
+*.osz
