@@ -10,6 +10,14 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 
 
+class Identity(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+    def forward(self, x, *args, **kwargs):
+        return x
+
+
 class Always(nn.Module):
     def __init__(self, value):
         super().__init__()
@@ -176,7 +184,7 @@ class CrossAttention(nn.Module):
             context_dim = dim
 
         self.norm = LayerNorm(dim)
-        self.norm_context = LayerNorm(context_dim) if norm_context else nn.Identity()
+        self.norm_context = LayerNorm(context_dim) if norm_context else Identity()
 
         self.to_q = nn.Linear(dim, inner_dim, bias=False)
         self.to_kv = nn.Linear(context_dim, inner_dim * 2, bias=False)
@@ -217,7 +225,7 @@ class Block(nn.Module):
         norm=True,
     ):
         super().__init__()
-        self.group_norm = nn.GroupNorm(groups, dim) if norm else nn.Identity()
+        self.group_norm = nn.GroupNorm(groups, dim) if norm else Identity()
         self.activation = nn.SiLU()
         self.project = nn.Conv1d(dim, dim_out, 7, padding=3)
 
@@ -263,7 +271,7 @@ class ResnetBlock(nn.Module):
         self.block1 = Block(dim, dim_out, groups=groups)
         self.block2 = Block(dim_out, dim_out, groups=groups)
 
-        self.res_conv = nn.Conv1d(dim, dim_out, 7, padding=3, padding_mode="reflect") if dim != dim_out else nn.Identity()
+        self.res_conv = nn.Conv1d(dim, dim_out, 7, padding=3, padding_mode="reflect") if dim != dim_out else Identity()
 
     def forward(self, x, time_emb=None, cond=None):
         scale_shift = None
@@ -413,7 +421,7 @@ class UNet(nn.Module):
             if layer_attn:
                 transformer_block = TransformerBlock
             else:
-                transformer_block = nn.Identity
+                transformer_block = Identity
 
             current_dim = h_dim_in
             skip_connection_dims.append(current_dim)

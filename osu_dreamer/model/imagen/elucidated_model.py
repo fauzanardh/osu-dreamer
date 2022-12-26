@@ -8,11 +8,12 @@ from torch.nn import functional as F
 from einops import rearrange, reduce
 
 from osu_dreamer.model.imagen import UNet
+from osu_dreamer.signal import X_DIM
 
 
 VALID_PAD = 1024
 A_DIM = 40
-X_DIM = 9
+X_DIM = 9  # only use 9 for now, I haven't updated the dataset yet
 
 
 class Hparams(NamedTuple):

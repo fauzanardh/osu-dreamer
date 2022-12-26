@@ -7,11 +7,11 @@ from einops import rearrange, reduce
 
 from osu_dreamer.model.imagen import GaussianDiffusionContinuousTimes
 from osu_dreamer.model.imagen import UNet
+from osu_dreamer.signal import X_DIM
 
 
 VALID_PAD = 1024
 A_DIM = 40
-X_DIM = 9
 
 
 def right_pad_dims_to(x, t):
