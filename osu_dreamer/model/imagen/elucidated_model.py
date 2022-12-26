@@ -321,6 +321,8 @@ class ElucidatedModel(nn.Module):
         maps,
         a,
     ):
+        maps, sl = self.inference_pad(maps)
+        a, _ = self.inference_pad(a)
         b = maps.shape[0]
         hp = self.hparams
 
@@ -341,7 +343,7 @@ class ElucidatedModel(nn.Module):
         )
 
         # losses
-        losses = self.loss_fn(denoised_maps, maps, reduction="none")
+        losses = self.loss_fn(denoised_maps[sl], maps[sl], reduction="none")
         losses = reduce(losses, "b ... -> b", "mean")
 
         # loss weighting
