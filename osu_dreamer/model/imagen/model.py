@@ -6,7 +6,7 @@ from torch.nn import functional as F
 from einops import rearrange, reduce
 
 from osu_dreamer.model.imagen import GaussianDiffusionContinuousTimes
-from osu_dreamer.model.modules import UNet
+from osu_dreamer.model.imagen import UNet
 from osu_dreamer.signal import X_DIM
 
 
@@ -28,7 +28,7 @@ class Model(nn.Module):
         h_dim_mult=(1, 2, 4, 4),
         # cond_dim=None,
         # num_time_tokens=2,
-        # learned_sinu_pos_emb_dim=16,
+        learned_sinu_pos_emb_dim=16,
         # layer_attns=(False, True, True, True),
         # layer_cross_attns=(False, True, True, True),
         num_resnet_blocks=2,
@@ -37,7 +37,7 @@ class Model(nn.Module):
         attn_heads=8,
         attn_dim_head=64,
         # attn_depth=1,
-        ff_mult=2,
+        # ff_mult=2,
         timesteps=128,
         loss_type="l2",
         noise_schedule="cosine",
@@ -83,7 +83,6 @@ class Model(nn.Module):
         # )
         h_dims = [h_dim * m for m in h_dim_mult]
         h_dim_groups = resnet_groups
-        convnext_mult = ff_mult
         blocks_per_depth = num_resnet_blocks
         attn_dim = attn_dim_head
 
@@ -92,12 +91,10 @@ class Model(nn.Module):
             X_DIM,
             h_dims,
             h_dim_groups,
-            convnext_mult,
-            5,
-            5,
             blocks_per_depth,
             attn_heads,
             attn_dim,
+            learned_sinu_pos_emb_dim,
         )
         self.unet_depth = len(h_dim_mult)
 
