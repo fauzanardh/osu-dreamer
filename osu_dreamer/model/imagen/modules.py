@@ -502,7 +502,7 @@ class UNet(nn.Module):
             if layer_attn:
                 transformer_block = TransformerBlock
             else:
-                transformer_block = nn.Identity
+                transformer_block = Identity
 
             current_dim = h_dim_out
             skip_connection_dim = skip_connection_dims.pop()
