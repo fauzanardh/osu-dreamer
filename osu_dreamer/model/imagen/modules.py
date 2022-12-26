@@ -2,11 +2,19 @@ import math
 from functools import partial
 
 import torch
-from torch import nn
-
+import torch.nn as nn
 from xformers.ops import memory_efficient_attention
 
 from einops import rearrange
+
+
+def zero_module(module):
+    """
+    Zero out the parameters of a module and return it.
+    """
+    for p in module.parameters():
+        p.detach().zero_()
+    return module
 
 
 class Residual(nn.Module):
@@ -18,12 +26,42 @@ class Residual(nn.Module):
         return self.fn(x, *args, **kwargs) + x
 
 
-class Identity(nn.Module):
-    def __init__(self, *args, **kwargs):
-        super().__init__()
+def Upsample(dim):
+    return nn.ConvTranspose1d(dim, dim, 4, 2, 1)
 
-    def forward(self, x, *args, **kwargs):
-        return x
+
+def Downsample(dim):
+    return nn.Conv1d(dim, dim, 4, 2, 1, padding_mode="reflect")
+
+
+class PreNorm(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.fn = fn
+        self.norm = nn.GroupNorm(1, dim)
+
+    def forward(self, x):
+        x = self.norm(x)
+        return self.fn(x)
+
+
+class LearnedSinusoidalPosEmb(nn.Module):
+    """following @crowsonkb 's lead with learned sinusoidal pos emb"""
+
+    """ https://github.com/crowsonkb/v-diffusion-jax/blob/master/diffusion/models/danbooru_128.py#L8 """
+
+    def __init__(self, dim):
+        super().__init__()
+        assert (dim % 2) == 0
+        half_dim = dim // 2
+        self.weights = nn.Parameter(torch.randn(half_dim))
+
+    def forward(self, x):
+        x = rearrange(x, "b -> b 1")
+        freqs = x * rearrange(self.weights, "d -> 1 d") * 2 * math.pi
+        fouriered = torch.cat((freqs.sin(), freqs.cos()), dim=-1)
+        fouriered = torch.cat((x, fouriered), dim=-1)
+        return fouriered
 
 
 class LayerNorm(nn.Module):
@@ -45,46 +83,6 @@ class LayerNorm(nn.Module):
         mean = torch.mean(x, dim=dim, keepdim=True)
 
         return (x - mean) * (var + eps).rsqrt().type(dtype) * self.g.type(dtype)
-
-
-class PreNorm(nn.Module):
-    def __init__(self, dim, fn):
-        super().__init__()
-        self.fn = fn
-        self.norm = nn.GroupNorm(1, dim)
-
-    def forward(self, x):
-        x = self.norm(x)
-        return self.fn(x)
-
-
-def Downsample(dim, dim_out=None):
-    dim_out = dim if dim_out is None else dim_out
-    return nn.Conv1d(dim, dim_out, 4, 2, 1, padding_mode="reflect")
-
-
-def Upsample(dim, dim_out=None):
-    dim_out = dim if dim_out is None else dim_out
-    return nn.ConvTranspose1d(dim, dim_out, 4, 2, 1)
-
-
-class LearnedSinusoidalPosEmb(nn.Module):
-    """following @crowsonkb 's lead with learned sinusoidal pos emb"""
-
-    """ https://github.com/crowsonkb/v-diffusion-jax/blob/master/diffusion/models/danbooru_128.py#L8 """
-
-    def __init__(self, dim):
-        super().__init__()
-        assert (dim % 2) == 0
-        half_dim = dim // 2
-        self.weights = nn.Parameter(torch.randn(half_dim))
-
-    def forward(self, x):
-        x = rearrange(x, "b -> b 1")
-        freqs = x * rearrange(self.weights, "d -> 1 d") * 2 * math.pi
-        fouriered = torch.cat((freqs.sin(), freqs.cos()), dim=-1)
-        fouriered = torch.cat((x, fouriered), dim=-1)
-        return fouriered
 
 
 # only implement flash attention for now
@@ -136,78 +134,85 @@ class Attention(nn.Module):
         return out
 
 
-class Block(nn.Module):
-    def __init__(
-        self,
-        dim,
-        dim_out,
-        groups=8,
-        norm=True,
-    ):
-        super().__init__()
-        self.group_norm = nn.GroupNorm(groups, dim) if norm else Identity()
-        self.activation = nn.SiLU()
-        self.project = nn.Conv1d(dim, dim_out, 7, padding=3)
+class WaveBlock(nn.Module):
+    """context is acquired from num_stacks*2**stack_depth neighborhood"""
 
-    def forward(self, x, scale_shift=None):
-        x = self.group_norm(x)
-
-        if scale_shift is not None:
-            scale, shift = scale_shift
-            x = x * (scale + 1) + shift
-
-        x = self.activation(x)
-        x = self.project(x)
-        return x
-
-
-class ResnetBlock(nn.Module):
-    def __init__(
-        self,
-        dim,
-        dim_out,
-        *,
-        time_cond_dim=None,
-        groups=8,
-    ):
+    def __init__(self, dim, stack_depth, num_stacks, mult=1, h_dim_groups=1, up=False):
         super().__init__()
 
-        self.time_mlp = None
-        if time_cond_dim is not None:
-            self.time_mlp = nn.Sequential(
-                nn.SiLU(),
-                nn.Linear(time_cond_dim, dim_out * 2),
-            )
+        self.in_net = nn.Conv1d(dim, dim * mult, 1)
+        self.out_net = nn.Conv1d(dim * mult, dim, 1)
 
-        self.block1 = Block(dim, dim_out, groups=groups)
-        self.block2 = Block(dim_out, dim_out, groups=groups)
-
-        self.res_conv = (
-            nn.Conv1d(dim, dim_out, 7, padding=3, padding_mode="reflect")
-            if dim != dim_out
-            else Identity()
+        self.nets = nn.ModuleList(
+            [
+                nn.Sequential(
+                    (nn.ConvTranspose1d if up else nn.Conv1d)(
+                        in_channels=dim * mult,
+                        out_channels=2 * dim * mult,
+                        kernel_size=2,
+                        padding=2**i,
+                        dilation=2 ** (i + 1),
+                        groups=h_dim_groups,
+                        **({} if up else dict(padding_mode="replicate")),
+                    ),
+                    nn.GLU(dim=1),
+                )
+                for _ in range(num_stacks)
+                for i in range(stack_depth)
+            ]
         )
 
+    def forward(self, x):
+        x = self.in_net(x)
+        h = x
+        for net in self.nets:
+            h = net(h)
+            x = x + h
+        return self.out_net(x)
+
+
+class ConvNextBlock(nn.Module):
+    """https://arxiv.org/abs/2201.03545"""
+
+    def __init__(self, dim, dim_out, *, emb_dim=None, mult=2, norm=True, groups=1):
+        super().__init__()
+
+        self.mlp = (
+            nn.Sequential(
+                nn.SiLU(),
+                nn.Linear(emb_dim, dim),
+            )
+            if emb_dim is not None
+            else None
+        )
+
+        self.ds_conv = nn.Conv1d(
+            dim, dim, 7, padding=3, groups=dim, padding_mode="reflect"
+        )
+
+        self.net = nn.Sequential(
+            nn.GroupNorm(1, dim) if norm else nn.Identity(),
+            nn.Conv1d(
+                dim, dim_out * mult, 7, 1, 3, padding_mode="reflect", groups=groups
+            ),
+            nn.SiLU(),
+            nn.GroupNorm(1, dim_out * mult),
+            nn.Conv1d(
+                dim_out * mult, dim_out, 7, 1, 3, padding_mode="reflect", groups=groups
+            ),
+        )
+
+        self.res_conv = nn.Conv1d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
+
     def forward(self, x, time_emb=None):
-        scale_shift = None
-        if self.time_mlp is not None and time_emb is not None:
-            time_emb = self.time_mlp(time_emb)
-            time_emb = rearrange(time_emb, "b c -> b c 1")
-            scale_shift = time_emb.chunk(2, dim=1)
+        h = self.ds_conv(x)
 
-        h = self.block1(x)
-        h = self.block2(h, scale_shift=scale_shift)
+        if (self.mlp is not None) and (time_emb is not None):
+            condition = self.mlp(time_emb)
+            h = h + condition.unsqueeze(-1)
 
+        h = self.net(h)
         return h + self.res_conv(x)
-
-
-def zero_module(module):
-    """
-    Zero out the parameters of a module and return it.
-    """
-    for p in module.parameters():
-        p.detach().zero_()
-    return module
 
 
 class UNet(nn.Module):
@@ -217,6 +222,9 @@ class UNet(nn.Module):
         out_dim,
         h_dims,
         h_dim_groups,
+        convnext_mult,
+        wave_stack_depth,
+        wave_num_stacks,
         blocks_per_depth,
         attn_heads,
         attn_dim,
@@ -224,13 +232,14 @@ class UNet(nn.Module):
     ):
         super().__init__()
 
-        block = partial(ResnetBlock, groups=h_dim_groups)
+        block = partial(ConvNextBlock, mult=convnext_mult, groups=h_dim_groups)
 
         in_out = list(zip(h_dims[:-1], h_dims[1:]))
         num_layers = len(in_out)
 
         self.init_conv = nn.Sequential(
             nn.Conv1d(in_dim, h_dims[0], 7, padding=3),
+            WaveBlock(h_dims[0], wave_stack_depth, wave_num_stacks),
         )
 
         # time embeddings
@@ -253,7 +262,7 @@ class UNet(nn.Module):
                                 block(
                                     dim_in if i == 0 else dim_out,
                                     dim_out,
-                                    time_cond_dim=emb_dim,
+                                    emb_dim=emb_dim,
                                 )
                                 for i in range(blocks_per_depth)
                             ]
@@ -281,11 +290,11 @@ class UNet(nn.Module):
         )
 
         mid_dim = h_dims[-1]
-        self.mid_block1 = block(mid_dim, mid_dim, time_cond_dim=emb_dim)
+        self.mid_block1 = block(mid_dim, mid_dim, emb_dim=emb_dim)
         self.mid_attn = Residual(
             PreNorm(mid_dim, Attention(mid_dim, heads=attn_heads, dim_head=attn_dim))
         )
-        self.mid_block2 = block(mid_dim, mid_dim, time_cond_dim=emb_dim)
+        self.mid_block2 = block(mid_dim, mid_dim, emb_dim=emb_dim)
 
         self.ups = nn.ModuleList(
             [
@@ -296,7 +305,7 @@ class UNet(nn.Module):
                                 block(
                                     dim_out * 2 if i == 0 else dim_in,
                                     dim_in,
-                                    time_cond_dim=emb_dim,
+                                    emb_dim=emb_dim,
                                 )
                                 for i in range(blocks_per_depth)
                             ]
