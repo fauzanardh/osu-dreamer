@@ -6,6 +6,9 @@ data*/
 lightning_logs*/
 *.ckpt
 *.ipynb
+*.npy
 *.pt
 *.bak
 *.osz
+*.zip
+*.tar.gz
